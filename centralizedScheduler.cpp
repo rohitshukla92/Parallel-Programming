@@ -9,7 +9,7 @@
 
 using namespace std;
 
-#define SIZE 4
+#define SIZE 128
 
 queue<function<void()> > task_que;
 pthread_mutex_t mutex_count = PTHREAD_MUTEX_INITIALIZER;
@@ -57,27 +57,95 @@ void* check_queue(void*){
 		//cout << "Here"  << endl;
                 task_que.front()();
                 task_que.pop();
-		if(task_que.empty()) done = true;
+		//cout << task_que.size() << endl;
+		if(task_que.empty()) {
+			done = true;
+			break;
+		}
                 pthread_mutex_unlock(&mutex_count);
         }
+	pthread_cond_broadcast(&condition);
+	pthread_mutex_unlock(&mutex_count);
+	pthread_exit(NULL);
 }
 
 
+void parallelMatrixMult(vector<vector<int> > m1,vector<vector<int> > m2,int r1,int c1,int r2,int c2,int n,int* parent_counter,int* curr_counter,int* curr_state){
+	if(n == 1){
+		//cout << "In Base Case" << endl;
+		Z[r1][c2] += m1[r1][c1]*m2[r2][c2];
+		(*parent_counter)--;
+		return;
+	}
+
+	if(*curr_state == 0){
+		int* c1_counter = new int(4);
+		int* c2_counter = new int(4);
+		int* c3_counter = new int(4);
+		int* c4_counter = new int(4);
+		int* c1_state = new int(0);
+		int* c2_state = new int(0);
+		int* c3_state = new int(0);
+		int* c4_state = new int(0);
+		*curr_counter = 4;
+		push_in_queue(parallelMatrixMult,m1,m2,r1,c1,r2,c2,n/2,curr_counter,c1_counter,c1_state);
+                push_in_queue(parallelMatrixMult,m1,m2,r1,c1,r2,c2+n/2,n/2,curr_counter,c2_counter,c2_state);
+                push_in_queue(parallelMatrixMult,m1,m2,r1+n/2,c1,r2,c2,n/2,curr_counter,c3_counter,c3_state);
+                push_in_queue(parallelMatrixMult,m1,m2,r1+n/2,c1,r2,c2+n/2,n/2,curr_counter,c4_counter,c4_state);
+		*curr_state = 1;
+	}
+
+	if(*curr_state == 1){
+		if(*curr_counter > 0 )
+			push_in_queue(parallelMatrixMult,m1,m2,r1,c1,r2,c2,n,parent_counter,curr_counter,curr_state);
+		*curr_state = 2;
+	}
+
+	if(*curr_state == 2){
+		int* c1_counter = new int(4);
+                int* c2_counter = new int(4);
+                int* c3_counter = new int(4);
+                int* c4_counter = new int(4);
+                int* c1_state = new int(0);
+                int* c2_state = new int(0);
+                int* c3_state = new int(0);
+		int* c4_state = new int(0);
+		*curr_counter = 4;
+
+		push_in_queue(parallelMatrixMult,m1,m2,r1,c1+n/2,r2+n/2,c2,n/2,curr_counter,c1_counter,c1_state);
+                push_in_queue(parallelMatrixMult,m1,m2,r1,c1+n/2,r2+n/2,c2+n/2,n/2,curr_counter,c2_counter,c2_state);
+                push_in_queue(parallelMatrixMult,m1,m2,r1+n/2,c1+n/2,r2+n/2,c2,n/2,curr_counter,c3_counter,c3_state);
+                push_in_queue(parallelMatrixMult,m1,m2,r1+n/2,c1+n/2,r2+n/2,c2+n/2,n/2,curr_counter,c4_counter,c4_state);
+
+		*curr_state = 3;
+	}
+
+	if(*curr_state == 3){
+		if(*curr_counter > 0)
+			push_in_queue(parallelMatrixMult,m1,m2,r1,c1,r2,c2,n,parent_counter,curr_counter,curr_state);
+	}
+	
+	(*parent_counter)--;
+}
+
+/*
 void parallelMatrixMult(vector<vector<int> > m1,vector<vector<int> > m2,int r1,int c1,int r2,int c2,int n,bool& d,int& parent_state){
         //cout << r1 << "1 " << c1 << "1 " << r2 << "1 " << c2 << endl;
 
 	if(n == 1){
-		//cout << "In Base Case" << endl;
+		cout << "In Base Case" << endl;
                 Z[r1][c2] += m1[r1][c1]*m2[r2][c2];
 		d = true;
                 return;
         }
 
-	bool d1,d2,d3,d4;
-	int s1,s2,s3,s4;
+	//bool d1,d2,d3,d4;
+	//int s1,s2,s3,s4;
 	
 	if(parent_state == 0){
 		//cout << "Inside parent_state 0" << endl;
+		bool d1,d2,d3,d4;
+		int s1,s2,s3,s4;
 		s1 = s2 = s3 = s4 = 0;
 		d1 = d2 = d3 = d4 = false;
         	push_in_queue(parallelMatrixMult,m1,m2,r1,c1,r2,c2,n/2,d1,s1);
@@ -96,6 +164,8 @@ void parallelMatrixMult(vector<vector<int> > m1,vector<vector<int> > m2,int r1,i
 
 	if(parent_state == 2){
 		//cout << "Parent_state_2" << endl;
+		bool d1,d2,d3,d4;
+		int s1,s2,s3,s4;
 		d1 = d2 = d3 = d4 = false;
 		s1 = s2 = s3 = s4 = 0;
 
@@ -103,7 +173,7 @@ void parallelMatrixMult(vector<vector<int> > m1,vector<vector<int> > m2,int r1,i
         	push_in_queue(parallelMatrixMult,m1,m2,r1,c1+n/2,r2+n/2,c2+n/2,n/2,d2,s2);
         	push_in_queue(parallelMatrixMult,m1,m2,r1+n/2,c1+n/2,r2+n/2,c2,n/2,d3,s3);
         	push_in_queue(parallelMatrixMult,m1,m2,r1+n/2,c1+n/2,r2+n/2,c2+n/2,n/2,d4,s4);
-		cout << n << endl;
+		//cout << n << endl;
 		parent_state = 3;
 	}
 
@@ -116,18 +186,17 @@ void parallelMatrixMult(vector<vector<int> > m1,vector<vector<int> > m2,int r1,i
 
 	d = true;
 }
-
+*/
 
 
 void centralized_scheduler(vector<vector<int> > X,vector<vector<int> > Y){
         cout << "Centralized scheduler started " << endl;
-	bool d = false;
-	int ps = 0;
-	push_in_queue(parallelMatrixMult,X,Y,0,0,0,0,SIZE,d,ps);
+	int* parent_counter = new int(4);
+	int* curr_counter = new int(4);
+	int* curr_state = new int(0);
+	push_in_queue(parallelMatrixMult,X,Y,0,0,0,0,SIZE,parent_counter,curr_counter,curr_state);
         for(int i = 0;i < 4;i++)
                 pthread_create(&threads[i],NULL,check_queue,NULL);
-
-
 
 	pthread_join(threads[0],NULL);
         pthread_join(threads[1],NULL);
