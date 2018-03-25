@@ -5,16 +5,22 @@
 #include <pthread.h>
 #include "papi.h"
 #include <queue>
+#include <atomic>
+#include <thread>
 #include <functional>
+#include "queue"
+#include "tbb/concurrent_queue.h"
 
 using namespace std;
+using namespace tbb;
 
-#define SIZE 128
+#define SIZE 64
 
-queue<function<void()> > task_que;
-pthread_mutex_t mutex_count = PTHREAD_MUTEX_INITIALIZER;
+//queue<function<void()> > task_que;
+//pthread_mutex_t mutex_count = PTHREAD_MUTEX_INITIALIZER;
+concurrent_queue<function<void() >> task_que;
 pthread_t threads[4];
-pthread_cond_t condition;
+//pthread_cond_t condition;
 bool done = false;
 
 vector<vector<int> > Z(SIZE,vector<int>(SIZE,0));
@@ -35,97 +41,100 @@ int PAPI_Init(){
 
 template < typename CALLABLE, typename... ARGS >
 void push_in_queue(CALLABLE fn,ARGS&&... args){
-	//cout << "Hello World" << endl;
         task_que.push(bind(fn,args...));
-	pthread_cond_signal(&condition);
 }
 
 void* check_queue(void*){
+	
+	if(done)
+		pthread_exit(NULL);
 
-	//cout << "Hello World" << endl ;
         while(!task_que.empty()){
-                //cout << "Popping task" << endl;
-                pthread_mutex_lock(&mutex_count);
-		while(task_que.empty()){
-			//cout << "In condition wait!!" << endl;
+                //pthread_mutex_lock(&mutex_count);
+		/*while(task_que.empty()){
 			if(done){
 				pthread_mutex_unlock(&mutex_count);
 				pthread_exit(NULL);
 			}
 			pthread_cond_wait(&condition, &mutex_count);
-		}
-		//cout << "Here"  << endl;
-                task_que.front()();
-                task_que.pop();
-		//cout << task_que.size() << endl;
-		if(task_que.empty()) {
-			done = true;
-			break;
-		}
-                pthread_mutex_unlock(&mutex_count);
+		}*/
+		function<void() > func;
+                if(task_que.try_pop(func))
+			func();
+                //pthread_mutex_unlock(&mutex_count);
         }
-	pthread_cond_broadcast(&condition);
-	pthread_mutex_unlock(&mutex_count);
-	pthread_exit(NULL);
+	//pthread_cond_broadcast(&condition);
+	//pthread_mutex_unlock(&mutex_count);
+	//pthread_exit(NULL);
 }
 
 
-void parallelMatrixMult(vector<vector<int> > m1,vector<vector<int> > m2,int r1,int c1,int r2,int c2,int n,int* parent_counter,int* curr_counter,int* curr_state){
-	if(n == 1){
-		//cout << "In Base Case" << endl;
-		Z[r1][c2] += m1[r1][c1]*m2[r2][c2];
-		(*parent_counter)--;
-		return;
+void parallelMatrixMult(vector<vector<int> > m1,vector<vector<int> > m2,int r1,int c1,int r2,int c2,int n,int& parent_counter,int& curr_counter,int& curr_state,bool isFirstTask){
+	if(n == 32){
+                for(int i = r1;i < r1 + n;i++){
+                        for(int k = c1;k < c1 + n;k++){
+                                for(int j = c2;j < c2 + n;j++){
+                                        Z[i][j] += m1[i][k]* m2[k][j];
+                                }
+                        }
+                }
+	parent_counter--;
+        return;
+        }
+
+
+	if(curr_state == 0){
+		int c1_counter = 4;
+		int c2_counter = 4;
+		int c3_counter = 4;
+		int c4_counter = 4;
+		int c1_state = 0;
+		int c2_state = 0;
+		int c3_state = 0;
+		int c4_state = 0;
+		curr_counter = 4;
+		push_in_queue(parallelMatrixMult,m1,m2,r1,c1,r2,c2,n/2,curr_counter,c1_counter,c1_state,false);
+                push_in_queue(parallelMatrixMult,m1,m2,r1,c1,r2,c2+n/2,n/2,curr_counter,c2_counter,c2_state,false);
+                push_in_queue(parallelMatrixMult,m1,m2,r1+n/2,c1,r2,c2,n/2,curr_counter,c3_counter,c3_state,false);
+                push_in_queue(parallelMatrixMult,m1,m2,r1+n/2,c1,r2,c2+n/2,n/2,curr_counter,c4_counter,c4_state,false);
+		curr_state = 1;
 	}
 
-	if(*curr_state == 0){
-		int* c1_counter = new int(4);
-		int* c2_counter = new int(4);
-		int* c3_counter = new int(4);
-		int* c4_counter = new int(4);
-		int* c1_state = new int(0);
-		int* c2_state = new int(0);
-		int* c3_state = new int(0);
-		int* c4_state = new int(0);
-		*curr_counter = 4;
-		push_in_queue(parallelMatrixMult,m1,m2,r1,c1,r2,c2,n/2,curr_counter,c1_counter,c1_state);
-                push_in_queue(parallelMatrixMult,m1,m2,r1,c1,r2,c2+n/2,n/2,curr_counter,c2_counter,c2_state);
-                push_in_queue(parallelMatrixMult,m1,m2,r1+n/2,c1,r2,c2,n/2,curr_counter,c3_counter,c3_state);
-                push_in_queue(parallelMatrixMult,m1,m2,r1+n/2,c1,r2,c2+n/2,n/2,curr_counter,c4_counter,c4_state);
-		*curr_state = 1;
+	if(curr_state == 1){
+		if(curr_counter > 0 )
+			push_in_queue(parallelMatrixMult,m1,m2,r1,c1,r2,c2,n,parent_counter,curr_counter,curr_state,isFirstTask);
+		curr_state = 2;
 	}
 
-	if(*curr_state == 1){
-		if(*curr_counter > 0 )
-			push_in_queue(parallelMatrixMult,m1,m2,r1,c1,r2,c2,n,parent_counter,curr_counter,curr_state);
-		*curr_state = 2;
+	if(curr_state == 2){
+		int c1_counter = 4;
+                int c2_counter = 4;
+                int c3_counter = 4;
+                int c4_counter = 4;
+                int c1_state = 0;
+                int c2_state = 0;
+                int c3_state = 0;
+		int c4_state = 0;
+		curr_counter = 4;
+
+		push_in_queue(parallelMatrixMult,m1,m2,r1,c1+n/2,r2+n/2,c2,n/2,curr_counter,c1_counter,c1_state,false);
+                push_in_queue(parallelMatrixMult,m1,m2,r1,c1+n/2,r2+n/2,c2+n/2,n/2,curr_counter,c2_counter,c2_state,false);
+                push_in_queue(parallelMatrixMult,m1,m2,r1+n/2,c1+n/2,r2+n/2,c2,n/2,curr_counter,c3_counter,c3_state,false);
+                push_in_queue(parallelMatrixMult,m1,m2,r1+n/2,c1+n/2,r2+n/2,c2+n/2,n/2,curr_counter,c4_counter,c4_state,false);
+
+		curr_state = 3;
 	}
 
-	if(*curr_state == 2){
-		int* c1_counter = new int(4);
-                int* c2_counter = new int(4);
-                int* c3_counter = new int(4);
-                int* c4_counter = new int(4);
-                int* c1_state = new int(0);
-                int* c2_state = new int(0);
-                int* c3_state = new int(0);
-		int* c4_state = new int(0);
-		*curr_counter = 4;
-
-		push_in_queue(parallelMatrixMult,m1,m2,r1,c1+n/2,r2+n/2,c2,n/2,curr_counter,c1_counter,c1_state);
-                push_in_queue(parallelMatrixMult,m1,m2,r1,c1+n/2,r2+n/2,c2+n/2,n/2,curr_counter,c2_counter,c2_state);
-                push_in_queue(parallelMatrixMult,m1,m2,r1+n/2,c1+n/2,r2+n/2,c2,n/2,curr_counter,c3_counter,c3_state);
-                push_in_queue(parallelMatrixMult,m1,m2,r1+n/2,c1+n/2,r2+n/2,c2+n/2,n/2,curr_counter,c4_counter,c4_state);
-
-		*curr_state = 3;
-	}
-
-	if(*curr_state == 3){
-		if(*curr_counter > 0)
-			push_in_queue(parallelMatrixMult,m1,m2,r1,c1,r2,c2,n,parent_counter,curr_counter,curr_state);
+	if(curr_state == 3){
+		if(curr_counter > 0)
+			push_in_queue(parallelMatrixMult,m1,m2,r1,c1,r2,c2,n,parent_counter,curr_counter,curr_state,isFirstTask);
 	}
 	
-	(*parent_counter)--;
+	parent_counter--;
+	if(isFirstTask){
+		if(curr_counter == 0)
+			done = true;
+	}
 }
 
 /*
@@ -191,10 +200,11 @@ void parallelMatrixMult(vector<vector<int> > m1,vector<vector<int> > m2,int r1,i
 
 void centralized_scheduler(vector<vector<int> > X,vector<vector<int> > Y){
         cout << "Centralized scheduler started " << endl;
-	int* parent_counter = new int(4);
-	int* curr_counter = new int(4);
-	int* curr_state = new int(0);
-	push_in_queue(parallelMatrixMult,X,Y,0,0,0,0,SIZE,parent_counter,curr_counter,curr_state);
+	int parent_counter = 4;
+	int curr_counter = 4;
+	int* curr_state = 0;
+	bool isFirstTask = true;
+	push_in_queue(parallelMatrixMult,X,Y,0,0,0,0,SIZE,parent_counter,curr_counter,curr_state,isFirstTask);
         for(int i = 0;i < 4;i++)
                 pthread_create(&threads[i],NULL,check_queue,NULL);
 
@@ -207,7 +217,7 @@ void centralized_scheduler(vector<vector<int> > X,vector<vector<int> > Y){
 int main(){
         vector<vector<int> > X(SIZE,vector<int>(SIZE));
         vector<vector<int> > Y(SIZE,vector<int>(SIZE));
-	pthread_cond_init(&condition, NULL);	
+	//pthread_cond_init(&condition, NULL);	
 	PAPI_Init();
 
 	for(int i = 0;i < SIZE;i++){
@@ -219,9 +229,8 @@ int main(){
 	
 	centralized_scheduler(X,Y);
         for(int i = 0;i < SIZE;i++){
-                for(int j = 0;j < SIZE;j++){
+                for(int j = 0;j < SIZE;j++)
                        cout << Z[i][j] << " ";
-                }
                 cout << endl;
         }
         return 0;
