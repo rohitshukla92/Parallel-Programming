@@ -14,11 +14,103 @@
 using namespace std;
 using namespace tbb;
 
-#define SIZE 64
+#define SIZE 32
+
+
+class QueueObject{
+	private:
+		 vector<vector<int> > m1;
+		 vector<vector<int> > m2;
+		 int r1,c1,r2,c2,n;
+		 int *parent_counter;
+		 int curr_counter, curr_state;
+		 bool isFirstTask;
+
+
+	public:
+		QueueObject();
+		QueueObject(vector<vector<int> > mat1,vector<vector<int> >mat2,int row1,int col1,int row2,int col2,int size,int* pc,bool isfirst);
+		vector<vector<int> > getm1();
+		vector<vector<int> > getm2();
+		int getr1();
+		int getc1();
+		int getr2();
+		int getc2();
+		int getn();
+		int* getParentCounter();
+		int  getCurrCounter();
+		int  getCurrState(); 
+		bool isfirsttask();
+		void parallelMatrixMult(QueueObject qo);	
+};
+
+	concurrent_queue<QueueObject> task_que;
+
+	QueueObject::QueueObject(vector<vector<int> > mat1,vector<vector<int> >mat2,int row1,int col1,int row2,int col2,int size,int* pc,bool isfirst){
+                m1 = mat1;
+                m2 = mat2;
+                r1 = row1;
+                c1 = col1;
+                r2 = row2;
+                c2 = col2;
+                n = size;
+                parent_counter = pc;
+                curr_counter = 4;
+                curr_state = 0;
+                isFirstTask = isfirst;
+        }
+
+	QueueObject::QueueObject(){
+	}
+		
+	vector<vector<int> > QueueObject::getm1(){
+		return m1;
+	}
+
+	vector<vector<int> > QueueObject::getm2(){
+		return m2;
+	}
+	
+	int QueueObject::getr1(){
+		return r1;
+	}
+
+	int QueueObject::getc1(){
+		return c1;
+	}
+
+	int QueueObject::getr2(){
+		return r2;
+	}
+
+	int QueueObject::getc2(){
+		return c2;
+	}
+
+	int QueueObject::getn(){
+		return n;
+	}
+
+	int* QueueObject::getParentCounter(){
+		return parent_counter;
+	}
+
+	int QueueObject::getCurrCounter(){
+		return curr_counter;
+	}
+
+	int QueueObject::getCurrState(){
+		return curr_state;
+	}
+
+	bool QueueObject::isfirsttask(){
+		return isFirstTask;
+	}
+
+
 
 //queue<function<void()> > task_que;
 //pthread_mutex_t mutex_count = PTHREAD_MUTEX_INITIALIZER;
-concurrent_queue<function<void() >> task_que;
 pthread_t threads[4];
 //pthread_cond_t condition;
 bool done = false;
@@ -39,9 +131,9 @@ int PAPI_Init(){
 }
 
 
-template < typename CALLABLE, typename... ARGS >
-void push_in_queue(CALLABLE fn,ARGS&&... args){
-        task_que.push(bind(fn,args...));
+//template < typename CALLABLE, typename... ARGS >
+void push_in_queue(QueueObject qo){
+        task_que.push(qo);
 }
 
 void* check_queue(void*){
@@ -58,9 +150,10 @@ void* check_queue(void*){
 			}
 			pthread_cond_wait(&condition, &mutex_count);
 		}*/
-		function<void() > func;
-                if(task_que.try_pop(func))
-			func();
+		//function<void() > func;
+		QueueObject qo;
+                if(task_que.try_pop(qo))
+			qo.parallelMatrixMult(qo);
                 //pthread_mutex_unlock(&mutex_count);
         }
 	//pthread_cond_broadcast(&condition);
@@ -69,8 +162,20 @@ void* check_queue(void*){
 }
 
 
-void parallelMatrixMult(vector<vector<int> > m1,vector<vector<int> > m2,int r1,int c1,int r2,int c2,int n,int& parent_counter,int& curr_counter,int& curr_state,bool isFirstTask){
-	if(n == 32){
+void QueueObject::parallelMatrixMult(QueueObject qo){
+	
+	vector<vector<int> > m1 = qo.getm1();
+        vector<vector<int> > m2 = qo.getm2();
+        int r1 = qo.getr1();
+	int c1 = qo.getc1();
+	int r2 = qo.getr2();
+	int c2 = qo.getc2();
+        int* parent_counter = qo.getParentCounter();
+	int curr_counter = qo.getCurrCounter();
+	int curr_state = qo.getCurrState();
+        bool isFirstTask = qo.isfirsttask();
+	
+	if(n == 4){
                 for(int i = r1;i < r1 + n;i++){
                         for(int k = c1;k < c1 + n;k++){
                                 for(int j = c2;j < c2 + n;j++){
@@ -78,62 +183,64 @@ void parallelMatrixMult(vector<vector<int> > m1,vector<vector<int> > m2,int r1,i
                                 }
                         }
                 }
-	parent_counter--;
+	(*parent_counter)--;
         return;
         }
 
 
 	if(curr_state == 0){
-		int c1_counter = 4;
-		int c2_counter = 4;
-		int c3_counter = 4;
-		int c4_counter = 4;
-		int c1_state = 0;
-		int c2_state = 0;
-		int c3_state = 0;
-		int c4_state = 0;
-		curr_counter = 4;
-		push_in_queue(parallelMatrixMult,m1,m2,r1,c1,r2,c2,n/2,curr_counter,c1_counter,c1_state,false);
-                push_in_queue(parallelMatrixMult,m1,m2,r1,c1,r2,c2+n/2,n/2,curr_counter,c2_counter,c2_state,false);
-                push_in_queue(parallelMatrixMult,m1,m2,r1+n/2,c1,r2,c2,n/2,curr_counter,c3_counter,c3_state,false);
-                push_in_queue(parallelMatrixMult,m1,m2,r1+n/2,c1,r2,c2+n/2,n/2,curr_counter,c4_counter,c4_state,false);
+		int* curr_count;
+		*curr_count = 4;
+		QueueObject t1(m1,m2,r1,c1,r2,c2,n/2,curr_count,false);
+		QueueObject t2(m1,m2,r1,c1,r2,c2+n/2,n/2,curr_count,false);
+		QueueObject t3(m1,m2,r1+n/2,c1,r2,c2,n/2,curr_count,false);
+		QueueObject t4(m1,m2,r1+n/2,c1,r2,c2+n/2,n/2,curr_count,false);
+
+		push_in_queue(t1);
+                push_in_queue(t2);
+                push_in_queue(t3);
+                push_in_queue(t4);
 		curr_state = 1;
 	}
 
 	if(curr_state == 1){
 		if(curr_counter > 0 )
-			push_in_queue(parallelMatrixMult,m1,m2,r1,c1,r2,c2,n,parent_counter,curr_counter,curr_state,isFirstTask);
-		curr_state = 2;
+			push_in_queue(qo);
+		else 
+			curr_state = 2;
 	}
 
 	if(curr_state == 2){
-		int c1_counter = 4;
-                int c2_counter = 4;
-                int c3_counter = 4;
-                int c4_counter = 4;
-                int c1_state = 0;
-                int c2_state = 0;
-                int c3_state = 0;
-		int c4_state = 0;
-		curr_counter = 4;
+		int* curr_count;
+		*curr_count = 4;
 
-		push_in_queue(parallelMatrixMult,m1,m2,r1,c1+n/2,r2+n/2,c2,n/2,curr_counter,c1_counter,c1_state,false);
-                push_in_queue(parallelMatrixMult,m1,m2,r1,c1+n/2,r2+n/2,c2+n/2,n/2,curr_counter,c2_counter,c2_state,false);
-                push_in_queue(parallelMatrixMult,m1,m2,r1+n/2,c1+n/2,r2+n/2,c2,n/2,curr_counter,c3_counter,c3_state,false);
-                push_in_queue(parallelMatrixMult,m1,m2,r1+n/2,c1+n/2,r2+n/2,c2+n/2,n/2,curr_counter,c4_counter,c4_state,false);
+		QueueObject t1(m1,m2,r1,c1+n/2,r2+n/2,c2,n/2,curr_count,false);
+                QueueObject t2(m1,m2,r1,c1+n/2,r2+n/2,c2+n/2,n/2,curr_count,false);
+                QueueObject t3(m1,m2,r1+n/2,c1+n/2,r2+n/2,c2,n/2,curr_count,false);
+                QueueObject t4(m1,m2,r1+n/2,c1+n/2,r2+n/2,c2+n/2,n/2,curr_count,false);
+
+		push_in_queue(t1);
+                push_in_queue(t2);
+                push_in_queue(t3);
+                push_in_queue(t4);
 
 		curr_state = 3;
 	}
 
 	if(curr_state == 3){
 		if(curr_counter > 0)
-			push_in_queue(parallelMatrixMult,m1,m2,r1,c1,r2,c2,n,parent_counter,curr_counter,curr_state,isFirstTask);
+			push_in_queue(qo);
+		else
+			curr_state = 4;
 	}
 	
-	parent_counter--;
-	if(isFirstTask){
-		if(curr_counter == 0)
-			done = true;
+	if(curr_state == 4){
+		cout << "Here" << endl;
+		(*parent_counter)--;
+		if(isFirstTask){
+			if(curr_counter == 0)
+				done = true;
+		}
 	}
 }
 
@@ -200,11 +307,12 @@ void parallelMatrixMult(vector<vector<int> > m1,vector<vector<int> > m2,int r1,i
 
 void centralized_scheduler(vector<vector<int> > X,vector<vector<int> > Y){
         cout << "Centralized scheduler started " << endl;
-	int parent_counter = 4;
-	int curr_counter = 4;
-	int* curr_state = 0;
+	int* parent_counter;
+	*parent_counter = 4;
 	bool isFirstTask = true;
-	push_in_queue(parallelMatrixMult,X,Y,0,0,0,0,SIZE,parent_counter,curr_counter,curr_state,isFirstTask);
+	
+	QueueObject t_main(X,Y,0,0,0,0,SIZE,parent_counter,isFirstTask);
+	push_in_queue(t_main);
         for(int i = 0;i < 4;i++)
                 pthread_create(&threads[i],NULL,check_queue,NULL);
 
