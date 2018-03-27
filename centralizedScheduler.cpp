@@ -14,7 +14,7 @@
 using namespace std;
 using namespace tbb;
 
-#define SIZE 32
+#define SIZE 1024
 
 
 class QueueObject{
@@ -22,7 +22,7 @@ class QueueObject{
 		 vector<vector<int> > m1;
 		 vector<vector<int> > m2;
 		 int r1,c1,r2,c2,n;
-		 int *parent_counter;
+		 int* parent_counter;
 		 int curr_counter, curr_state;
 		 bool isFirstTask;
 
@@ -41,10 +41,10 @@ class QueueObject{
 		int  getCurrCounter();
 		int  getCurrState(); 
 		bool isfirsttask();
-		void parallelMatrixMult(QueueObject qo);	
+		void parallelMatrixMult();	
 };
 
-	concurrent_queue<QueueObject> task_que;
+	concurrent_queue<QueueObject*> task_que;
 
 	QueueObject::QueueObject(vector<vector<int> > mat1,vector<vector<int> >mat2,int row1,int col1,int row2,int col2,int size,int* pc,bool isfirst){
                 m1 = mat1;
@@ -132,7 +132,8 @@ int PAPI_Init(){
 
 
 //template < typename CALLABLE, typename... ARGS >
-void push_in_queue(QueueObject qo){
+void push_in_queue(QueueObject* qo){
+	//cout << "Here" << endl;
         task_que.push(qo);
 }
 
@@ -151,9 +152,12 @@ void* check_queue(void*){
 			pthread_cond_wait(&condition, &mutex_count);
 		}*/
 		//function<void() > func;
-		QueueObject qo;
-                if(task_que.try_pop(qo))
-			qo.parallelMatrixMult(qo);
+		QueueObject* qo;
+                if(task_que.try_pop(qo)){
+			qo->parallelMatrixMult();
+			if(qo->getCurrState() < 4)
+				push_in_queue(qo);
+		}
                 //pthread_mutex_unlock(&mutex_count);
         }
 	//pthread_cond_broadcast(&condition);
@@ -162,20 +166,10 @@ void* check_queue(void*){
 }
 
 
-void QueueObject::parallelMatrixMult(QueueObject qo){
-	
-	vector<vector<int> > m1 = qo.getm1();
-        vector<vector<int> > m2 = qo.getm2();
-        int r1 = qo.getr1();
-	int c1 = qo.getc1();
-	int r2 = qo.getr2();
-	int c2 = qo.getc2();
-        int* parent_counter = qo.getParentCounter();
-	int curr_counter = qo.getCurrCounter();
-	int curr_state = qo.getCurrState();
-        bool isFirstTask = qo.isfirsttask();
-	
-	if(n == 4){
+void QueueObject::parallelMatrixMult(){
+	//cout << n << " " << curr_counter << " " << curr_state << " "  << *parent_counter << endl;
+	if(n == 128){
+		curr_state = 4;
                 for(int i = r1;i < r1 + n;i++){
                         for(int k = c1;k < c1 + n;k++){
                                 for(int j = c2;j < c2 + n;j++){
@@ -189,12 +183,15 @@ void QueueObject::parallelMatrixMult(QueueObject qo){
 
 
 	if(curr_state == 0){
-		int* curr_count;
-		*curr_count = 4;
-		QueueObject t1(m1,m2,r1,c1,r2,c2,n/2,curr_count,false);
-		QueueObject t2(m1,m2,r1,c1,r2,c2+n/2,n/2,curr_count,false);
-		QueueObject t3(m1,m2,r1+n/2,c1,r2,c2,n/2,curr_count,false);
-		QueueObject t4(m1,m2,r1+n/2,c1,r2,c2+n/2,n/2,curr_count,false);
+		QueueObject* t1;
+		QueueObject* t2;
+		QueueObject* t3;
+		QueueObject* t4;
+
+		t1 = new QueueObject(m1,m2,r1,c1,r2,c2,n/2,&curr_counter,false);
+		t2 = new QueueObject(m1,m2,r1,c1,r2,c2+n/2,n/2,&curr_counter,false);
+		t3 = new QueueObject(m1,m2,r1+n/2,c1,r2,c2,n/2,&curr_counter,false);
+		t4 = new QueueObject(m1,m2,r1+n/2,c1,r2,c2+n/2,n/2,&curr_counter,false);
 
 		push_in_queue(t1);
                 push_in_queue(t2);
@@ -204,20 +201,21 @@ void QueueObject::parallelMatrixMult(QueueObject qo){
 	}
 
 	if(curr_state == 1){
-		if(curr_counter > 0 )
-			push_in_queue(qo);
-		else 
+		if(curr_counter == 0 )
 			curr_state = 2;
 	}
 
 	if(curr_state == 2){
-		int* curr_count;
-		*curr_count = 4;
+		curr_counter = 4;
+		QueueObject* t1;
+                QueueObject* t2;
+                QueueObject* t3;
+                QueueObject* t4;
 
-		QueueObject t1(m1,m2,r1,c1+n/2,r2+n/2,c2,n/2,curr_count,false);
-                QueueObject t2(m1,m2,r1,c1+n/2,r2+n/2,c2+n/2,n/2,curr_count,false);
-                QueueObject t3(m1,m2,r1+n/2,c1+n/2,r2+n/2,c2,n/2,curr_count,false);
-                QueueObject t4(m1,m2,r1+n/2,c1+n/2,r2+n/2,c2+n/2,n/2,curr_count,false);
+		t1 = new QueueObject(m1,m2,r1,c1+n/2,r2+n/2,c2,n/2,&curr_counter,false);
+                t2 = new QueueObject(m1,m2,r1,c1+n/2,r2+n/2,c2+n/2,n/2,&curr_counter,false);
+                t3 = new QueueObject(m1,m2,r1+n/2,c1+n/2,r2+n/2,c2,n/2,&curr_counter,false);
+                t4 = new QueueObject(m1,m2,r1+n/2,c1+n/2,r2+n/2,c2+n/2,n/2,&curr_counter,false);
 
 		push_in_queue(t1);
                 push_in_queue(t2);
@@ -228,14 +226,11 @@ void QueueObject::parallelMatrixMult(QueueObject qo){
 	}
 
 	if(curr_state == 3){
-		if(curr_counter > 0)
-			push_in_queue(qo);
-		else
+		if(curr_counter == 0)
 			curr_state = 4;
 	}
 	
 	if(curr_state == 4){
-		cout << "Here" << endl;
 		(*parent_counter)--;
 		if(isFirstTask){
 			if(curr_counter == 0)
@@ -307,11 +302,12 @@ void parallelMatrixMult(vector<vector<int> > m1,vector<vector<int> > m2,int r1,i
 
 void centralized_scheduler(vector<vector<int> > X,vector<vector<int> > Y){
         cout << "Centralized scheduler started " << endl;
-	int* parent_counter;
-	*parent_counter = 4;
+	int parent_counter;
+	parent_counter = 4;
 	bool isFirstTask = true;
 	
-	QueueObject t_main(X,Y,0,0,0,0,SIZE,parent_counter,isFirstTask);
+	QueueObject* t_main;
+	t_main = new QueueObject(X,Y,0,0,0,0,SIZE,&parent_counter,isFirstTask);
 	push_in_queue(t_main);
         for(int i = 0;i < 4;i++)
                 pthread_create(&threads[i],NULL,check_queue,NULL);
@@ -334,9 +330,11 @@ int main(){
                         Y[i][j] = 1;/*rand()%10 + 1 */
                 }
         }
-	
+	int start_time = clock();
 	centralized_scheduler(X,Y);
-        for(int i = 0;i < SIZE;i++){
+	int stop_time = clock();
+	cout << (stop_time - start_time)/double(CLOCKS_PER_SEC) << endl;
+        for(int i = SIZE-1;i < SIZE;i++){
                 for(int j = 0;j < SIZE;j++)
                        cout << Z[i][j] << " ";
                 cout << endl;
