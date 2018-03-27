@@ -1,202 +1,285 @@
-#include<iostream>
-#include<thread>
-#include<mutex>
-#include<deque>
-#include<vector>
-#include<functional>
-#include<pthread.h>
+#include <iostream>
+#include <vector>
+#include <time.h>
+#include <unistd.h>
+#include <pthread.h>
+#include "papi.h"
+#include <queue>
+#include <atomic>
+#include <thread>
+#include <functional>
+#include "queue"
+#include "tbb/concurrent_queue.h"
 #include<map>
-#include<time.h>
-#include<queue>
-
-#define SIZE 64
-
 using namespace std;
+using namespace tbb;
 
-static const int num_threads=4;
+#define SIZE 1024
 
-pthread_t thr[num_threads];
 
-vector<vector<int> > result(SIZE,vector<int>(SIZE,0));
+map<pthread_t,int> m;
 
-map<pthread_t,deque<function<void()> >> m;
-map<pthread_t,pthread_mutex_t> mutexMap;
-map<pthread_t,pthread_mutex_t> conditionMap; 
-pthread_mutex_t mutex_count = PTHREAD_MUTEX_INITIALIZER;
-pthread_cond_t condition;
+class QueueObject{
+    private:
+         vector<vector<int> > m1;
+         vector<vector<int> > m2;
+         int r1,c1,r2,c2,n;
+         int* parent_counter;
+         int curr_counter, curr_state;
+         bool isFirstTask;
+         concurrent_queue<QueueObject*> task_que;
+
+
+
+    public:
+        QueueObject();
+        QueueObject(vector<vector<int> > mat1,vector<vector<int> >mat2,int row1,int col1,int row2,int col2,int size,int* pc,bool isfirst);
+        vector<vector<int> > getm1();
+        vector<vector<int> > getm2();
+        int getr1();
+        int getc1();
+        int getr2();
+        int getc2();
+        int getn();
+        int* getParentCounter();
+        int  getCurrCounter();
+        int  getCurrState(); 
+        bool isfirsttask();
+        void parallelMatrixMult();  
+};
+
+ concurrent_queue<QueueObject*>  concurQueue[4];
+   
+
+    QueueObject::QueueObject(vector<vector<int> > mat1,vector<vector<int> >mat2,int row1,int col1,int row2,int col2,int size,int* pc,bool isfirst){
+                m1 = mat1;
+                m2 = mat2;
+                r1 = row1;
+                c1 = col1;
+                r2 = row2;
+                c2 = col2;
+                n = size;
+                parent_counter = pc;
+                curr_counter = 4;
+                curr_state = 0;
+                isFirstTask = isfirst;
+        }
+
+    QueueObject::QueueObject(){
+    }
+        
+    vector<vector<int> > QueueObject::getm1(){
+        return m1;
+    }
+
+    vector<vector<int> > QueueObject::getm2(){
+        return m2;
+    }
+    
+    int QueueObject::getr1(){
+        return r1;
+    }
+
+    int QueueObject::getc1(){
+        return c1;
+    }
+
+    int QueueObject::getr2(){
+        return r2;
+    }
+
+    int QueueObject::getc2(){
+        return c2;
+    }
+
+    int QueueObject::getn(){
+        return n;
+    }
+
+    int* QueueObject::getParentCounter(){
+        return parent_counter;
+    }
+
+    int QueueObject::getCurrCounter(){
+        return curr_counter;
+    }
+
+    int QueueObject::getCurrState(){
+        return curr_state;
+    }
+
+    bool QueueObject::isfirsttask(){
+        return isFirstTask;
+    }
+
+
+
+
+pthread_t threads[4];
+
 bool done = false;
 
+vector<vector<int> > Z(SIZE,vector<int>(SIZE,0));
 
-
-
-
-template<typename CALLABLE,typename... ARGS>
-void push_in_queue(pthread_t id,CALLABLE fn,ARGS&&... args){
-	//cout << "Hello World" << endl;
-        m[id].push_back(bind(fn,args...));
-	pthread_cond_signal(&condition);
+int PAPI_Init(){
+        int retVal;
+        retVal = PAPI_library_init(PAPI_VER_CURRENT);
+        if(retVal != PAPI_VER_CURRENT)
+                cout << "Error in PAPI Intialization Library!!" << endl;
+        retVal = PAPI_query_event(PAPI_L1_TCM);
+        if(retVal != PAPI_OK)
+                cout << "PAPI_L1_TCM not available" << endl;
+        retVal = PAPI_query_event(PAPI_L2_TCM);
+        if(retVal != PAPI_OK)
+                cout << "PAPI_L2_TCM not available" << endl;
 }
 
 
+void push_in_queue(QueueObject* qo,int idx){
+        cout << "Into push in queue" << endl;
+	cout << idx << endl;
+        concurQueue[idx].push(qo);
+	cout << "After the queue is pushed" << endl;
+}
 
-
-void parallelMatrixMult(vector<vector<int> > m1,vector<vector<int> > m2,int r1,int c1,int r2,int c2,int n,int* parent_counter,int* curr_counter,int* curr_state){
-
-	srand(time(NULL));
-	if(n == 1){
-		cout << "Base case called" << endl;
-		result[r1][c2] += m1[r1][c1]*m2[r2][c2];
-		(*parent_counter)--;
-		return;
-	}
-	int idx = rand()%4;
-
-	if(*curr_state == 0){
-		int* c1_counter = new int(4);
-		int* c2_counter = new int(4);
-		int* c3_counter = new int(4);
-		int* c4_counter = new int(4);
-		int* c1_state = new int(0);
-		int* c2_state = new int(0);
-		int* c3_state = new int(0);
-		int* c4_state = new int(0);
-		*curr_counter = 4;
-
-	
-		//pthread_t tid=pthread_self();
-		/*while(m[thr[idx]].size() == 0){
-		  if(done) {
-		  pthread_mutex_unlock(&mutex_count);
-		  pthread_exit(NULL);
-		  break;
-		  }
-		  cout << "In condition wait!!" << endl;
-		  pthread_cond_wait(&condition,&mutex_count);
-		  idx = rand()%4;
-                        
-		  if(!done){
-		  pthread_mutex_lock(&mutex_count);
-		  m[thr[idx]].front()();
-		  m[thr[idx]].pop_front();
-		  pthread_mutex_lock(&mutex_count);
-		  }
-		  }*/
-
-		push_in_queue(thr[idx],parallelMatrixMult,m1,m2,r1,c1,r2,c2,n/2,curr_counter,c1_counter,c1_state);
-		push_in_queue(thr[idx],parallelMatrixMult,m1,m2,r1,c1,r2,c2+n/2,n/2,curr_counter,c2_counter,c2_state);
-		push_in_queue(thr[idx],parallelMatrixMult,m1,m2,r1+n/2,c1,r2,c2,n/2,curr_counter,c3_counter,c3_state);
-		push_in_queue(thr[idx],parallelMatrixMult,m1,m2,r1+n/2,c1,r2,c2+n/2,n/2,curr_counter,c4_counter,c4_state);
-		*curr_state = 1;
-	}
-		if(*curr_state == 1){
-			if(*curr_counter > 0 )
-				push_in_queue(pthread_self(),parallelMatrixMult,m1,m2,r1,c1,r2,c2,n,parent_counter,curr_counter,curr_state);
-			*curr_state = 2;
-		}
-
-		if(*curr_state == 2){
-			int* c1_counter = new int(4);
-			int* c2_counter = new int(4);
-			int* c3_counter = new int(4);
-			int* c4_counter = new int(4);
-			int* c1_state = new int(0);
-			int* c2_state = new int(0);
-			int* c3_state = new int(0);
-			int* c4_state = new int(0);
-			*curr_counter = 4;
-   
-			push_in_queue(thr[idx],parallelMatrixMult,m1,m2,r1,c1+n/2,r2+n/2,c2,n/2,curr_counter,c1_counter,c1_state);
-			push_in_queue(thr[idx],parallelMatrixMult,m1,m2,r1,c1+n/2,r2+n/2,c2+n/2,n/2,curr_counter,c2_counter,c2_state);
-			push_in_queue(thr[idx],parallelMatrixMult,m1,m2,r1+n/2,c1+n/2,r2+n/2,c2,n/2,curr_counter,c3_counter,c3_state);
-			push_in_queue(thr[idx],parallelMatrixMult,m1,m2,r1+n/2,c1+n/2,r2+n/2,c2+n/2,n/2,curr_counter,c4_counter,c4_state);
-	
-			*curr_state = 3;
-		}
-
-		if(*curr_state == 3){
-			if(*curr_counter > 0)
-				push_in_queue(pthread_self(),parallelMatrixMult,m1,m2,r1,c1,r2,c2,n,parent_counter,curr_counter,curr_state);
-		}
-	
-		(*parent_counter)--;
+void* check_queue(void*){
+  
+  while(1){
+    if(done)
+        pthread_exit(NULL);
+    QueueObject* qo;
+    if(concurQueue[m[pthread_self()]].try_pop(qo)){
+         qo->parallelMatrixMult();
+         if(qo->getCurrState() < 4){
+             int idx=rand()%4;
+             push_in_queue(qo,idx);
+        }
+        }
+                
+  }
 }
     
 
-void* check_queue(void*){
 
-	//cout << "Hello World" << endl ;
-	pthread_t id=pthread_self();
-	cout << id;
-	while(!m[id].empty()){
-                //cout << "Popping task" << endl;
-		pthread_mutex_lock(&mutex_count);
-		while(m[id].empty()){
-			//cout << "In condition wait!!" << endl;
-			if(done){
-				pthread_mutex_unlock(&mutex_count);
-				pthread_exit(NULL);
-			}
-			pthread_cond_wait(&condition, &mutex_count);
-		}
-		//cout << "Here"  << endl;
-                m[id].back()();
-                m[id].pop_back();
-		
+void QueueObject::parallelMatrixMult(){
+    
+    if(n == 256){
+        curr_state = 4;
+                for(int i = r1;i < r1 + n;i++){
+                        for(int k = c1;k < c1 + n;k++){
+                                for(int j = c2;j < c2 + n;j++){
+                                        Z[i][j] += m1[i][k]* m2[k][j];
+                                }
+                        }
+                }
+    (*parent_counter)--;
+        return;
         }
-	pthread_cond_broadcast(&condition);
-	pthread_mutex_unlock(&mutex_count);
-	pthread_exit(NULL);
+
+    
+
+    if(curr_state == 0){
+        QueueObject* t1;
+        QueueObject* t2;
+        QueueObject* t3;
+        QueueObject* t4;
+
+        t1 = new QueueObject(m1,m2,r1,c1,r2,c2,n/2,&curr_counter,false);
+        t2 = new QueueObject(m1,m2,r1,c1,r2,c2+n/2,n/2,&curr_counter,false);
+        t3 = new QueueObject(m1,m2,r1+n/2,c1,r2,c2,n/2,&curr_counter,false);
+        t4 = new QueueObject(m1,m2,r1+n/2,c1,r2,c2+n/2,n/2,&curr_counter,false);
+
+        int idx1=rand()%4;
+        push_in_queue(t1,m[pthread_self()]);
+        push_in_queue(t2,idx1);
+        push_in_queue(t3,idx1);
+        push_in_queue(t4,idx1);
+        curr_state = 1;
+    }
+
+    if(curr_state == 1){
+        if(curr_counter == 0 )
+            curr_state = 2;
+    }
+
+    if(curr_state == 2){
+        curr_counter = 4;
+        QueueObject* t1;
+        QueueObject* t2;
+        QueueObject* t3;
+        QueueObject* t4;
+
+        t1 = new QueueObject(m1,m2,r1,c1+n/2,r2+n/2,c2,n/2,&curr_counter,false);
+        t2 = new QueueObject(m1,m2,r1,c1+n/2,r2+n/2,c2+n/2,n/2,&curr_counter,false);
+        t3 = new QueueObject(m1,m2,r1+n/2,c1+n/2,r2+n/2,c2,n/2,&curr_counter,false);
+        t4 = new QueueObject(m1,m2,r1+n/2,c1+n/2,r2+n/2,c2+n/2,n/2,&curr_counter,false);
+
+        int idx2=rand()%4;
+        push_in_queue(t1,m[pthread_self()]);
+        push_in_queue(t2,idx2);
+        push_in_queue(t3,idx2);
+        push_in_queue(t4,idx2);
+
+        curr_state = 3;
+    }
+
+    if(curr_state == 3){
+        if(curr_counter == 0)
+            curr_state = 4;
+    }
+    
+    if(curr_state == 4){
+        (*parent_counter)--;
+        if(isFirstTask){
+            if(curr_counter == 0)
+                done = true;
+        }
+    }
 }
 
 
+void sharing_scheduler(vector<vector<int> > X,vector<vector<int> > Y){
+    cout << "Sharing scheduler started" << endl;
+    int parent_counter;
+    parent_counter = 4;
+    bool isFirstTask = true;
+    
+    QueueObject* t_main;
+    t_main = new QueueObject(X,Y,0,0,0,0,SIZE,&parent_counter,isFirstTask);
+    cout << "Hello world" << endl; 
+    push_in_queue(t_main,0);
+    for(int i = 0;i < 4;i++){
+        pthread_create(&threads[i],NULL,check_queue,NULL);
+        m[threads[i]]=i;
+    }
+    
+    pthread_join(threads[0],NULL);
+    pthread_join(threads[1],NULL);
+    pthread_join(threads[2],NULL);  
+    pthread_join(threads[3],NULL);
+}
 
-void workSharingScheduler(vector<vector<int> > m1, vector<vector<int> > m2)
-{
+int main(){
+    vector<vector<int> > X(SIZE,vector<int>(SIZE));
+    vector<vector<int> > Y(SIZE,vector<int>(SIZE));
+    
+    PAPI_Init();
 
-        //pthread_create(&thr[0],NULL,check_queue,NULL);
-	int* parent_counter = new int(4);
-	int* curr_counter = new int(4);
-	int* curr_state = new int(0);
+    for(int i = 0;i < SIZE;i++){
+                for(int j = 0;j < SIZE;j++){
+                        X[i][j] = 1;
+                        Y[i][j] = 1;
+                }
+        }
+    int start_time = clock();
+    sharing_scheduler(X,Y);
+    int stop_time = clock();
+    cout << (stop_time - start_time)/double(CLOCKS_PER_SEC) << endl;
+    for(int i = SIZE-1;i < SIZE;i++){
+            for(int j = 0;j < SIZE;j++)
+                    cout << Z[i][j] << " ";
+            cout << endl;
+    }
+    return 0;
+}
  
-	for(int i=0;i<num_threads;i++){
-		pthread_create(&thr[i],NULL,check_queue,NULL);
-	if(i==0)
-	        push_in_queue(thr[0],parallelMatrixMult,m1,m2,0,0,0,0,SIZE,parent_counter,curr_counter,curr_state);
-	}
-     
-	for(int i=0;i<num_threads;i++)
-		pthread_join(thr[i],NULL);
-        
-        
-}
-
-int main(void)
-{
-	vector<vector<int> > m1(SIZE,vector<int>(SIZE));
-        vector<vector<int> > m2(SIZE,vector<int>(SIZE));
-	pthread_cond_init(&condition, NULL);
-	for(int i=0;i<SIZE;i++)
-	{
-		for(int j=0;j<SIZE;j++)
-		{
-			m1[i][j]=1;
-			m2[i][j]=1;
-		}
-	}
-        bool done=false;
-	
-        workSharingScheduler(m1,m2);
-        for(int i=0;i<SIZE;i++){
-                for(int j=0;j<SIZE;j++){
-                        cout << result[i][j] << " " ;
-
-            }
-            cout<<endl;
-	}
-
-	return 0;
-}
-             
-                                                                                                                                                                                          
-
-                                                                                                                                                                                          
